@@ -1,0 +1,127 @@
+--Set up a Self-hosted Integration Runtime (SHIR) in Azure Data Factory to securely connect 
+to an on-premises server. Extract data from the local environment and load it into an Azure 
+SQL Database to enable cloud-based analytics and processing.--
+
+--Folder Structure:--
+ADF-SHIR-LocalToAzureSQL/
+├── README.md
+├── datafactory/
+│   ├── linkedservices/
+│   │   ├── LocalSQLServer.json
+│   │   ├── AzureSQLDatabase.json
+│   ├── datasets/
+│   │   ├── SourceDataset.json
+│   │   ├── SinkDataset.json
+│   └── pipelines/
+│       └── CopyPipeline.json
+├── shir-installation/
+│   └── SHIR_Setup_Guide.md
+└── scripts/
+    └── SampleTableScript.sql
+
+--Sample Table Script--
+CREATE DATABASE LocalTestDB;
+GO
+USE LocalTestDB;
+GO
+
+CREATE TABLE Employees (
+    ID INT PRIMARY KEY,
+    Name NVARCHAR(100),
+    Position NVARCHAR(100),
+    Salary FLOAT
+);
+
+INSERT INTO Employees (ID, Name, Position, Salary) VALUES
+(1, 'John Doe', 'Developer', 75000),
+(2, 'Jane Smith', 'Manager', 85000),
+(3, 'Alan Walker', 'Analyst', 68000);
+
+--JSON Samples--
+{
+  "name": "LocalSQLServer",
+  "properties": {
+    "type": "SqlServer",
+    "typeProperties": {
+      "connectionString": "Server=localhost;Database=LocalTestDB;Integrated Security=True;"
+    },
+    "connectVia": {
+      "referenceName": "SelfHostedIR",
+      "type": "IntegrationRuntimeReference"
+    }
+  }
+}
+
+--linkedservices/AzureSQLDatabase.json--
+{
+  "name": "AzureSQLDatabase",
+  "properties": {
+    "type": "AzureSqlDatabase",
+    "typeProperties": {
+      "connectionString": "Server=tcp:<your-server>.database.windows.net,1433;Initial Catalog=<your-db>;User ID=<user>;Password=<password>;"
+    }
+  }
+}
+
+--datasets/SourceDataset.json--
+{
+  "name": "SourceEmployees",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "LocalSQLServer",
+      "type": "LinkedServiceReference"
+    },
+    "type": "SqlServerTable",
+    "typeProperties": {
+      "tableName": "Employees"
+    }
+  }
+}
+
+--datasets/SinkDataset.json--
+{
+  "name": "SinkEmployees",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "AzureSQLDatabase",
+      "type": "LinkedServiceReference"
+    },
+    "type": "AzureSqlTable",
+    "typeProperties": {
+      "tableName": "Employees"
+    }
+  }
+}
+
+--pipelines/CopyPipeline.json--
+{
+  "name": "CopyLocalToAzureSQL",
+  "properties": {
+    "activities": [
+      {
+        "name": "CopyFromLocalToAzure",
+        "type": "Copy",
+        "inputs": [
+          {
+            "referenceName": "SourceEmployees",
+            "type": "DatasetReference"
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "SinkEmployees",
+            "type": "DatasetReference"
+          }
+        ],
+        "typeProperties": {
+          "source": {
+            "type": "SqlSource"
+          },
+          "sink": {
+            "type": "SqlSink"
+          }
+        }
+      }
+    ]
+  }
+}

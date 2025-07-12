@@ -1,0 +1,77 @@
+--Configure a custom time-based trigger in Azure Data Factory to run the pipeline on the last Saturday of each month. 
+This supports periodic reporting and batch processing without manual intervention.--
+
+--Folder Structure:--
+ADF-Last-Saturday-Trigger/
+├── README.md
+├── datafactory/
+│   ├── pipelines/
+│   │   └── MonthlyReportingPipeline.json
+├── trigger/
+│   └── LastSaturdayTriggerSetup.md
+├── functions/
+│   └── CalculateLastSaturdayFunction.json
+└── docs/
+    └── LastSaturdayTrigger_Guide.md
+
+--Sample C# Logic:--
+#r "Newtonsoft.Json"
+using System.Net;
+using Newtonsoft.Json;
+
+public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, ILogger log)
+{
+    var today = DateTime.UtcNow.Date;
+    var lastDayOfMonth = new DateTime(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
+    
+    // Walk backward to find last Saturday
+    while (lastDayOfMonth.DayOfWeek != DayOfWeek.Saturday)
+        lastDayOfMonth = lastDayOfMonth.AddDays(-1);
+
+    var isLastSaturday = today == lastDayOfMonth;
+    
+    return req.CreateResponse(HttpStatusCode.OK, new {
+        isLastSaturday = isLastSaturday
+    });
+}
+
+--pipelines/MonthlyReportingPipeline.json--
+{
+  "name": "MonthlyReportingPipeline",
+  "properties": {
+    "activities": [
+      {
+        "name": "CheckLastSaturday",
+        "type": "WebActivity",
+        "typeProperties": {
+          "url": "https://<your-function>.azurewebsites.net/api/CheckLastSaturday",
+          "method": "GET"
+        }
+      },
+      {
+        "name": "IfLastSaturday",
+        "type": "IfCondition",
+        "dependsOn": [ { "activity": "CheckLastSaturday", "dependencyConditions": [ "Succeeded" ] } ],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(activity('CheckLastSaturday').output.isLastSaturday, true)",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "ExecuteMainLogic",
+              "type": "ExecutePipeline",
+              "typeProperties": {
+                "pipeline": {
+                  "referenceName": "MainMonthlyPipeline",
+                  "type": "PipelineReference"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+

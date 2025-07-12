@@ -1,0 +1,133 @@
+--Set up access to FTP/SFTP servers and build a pipeline in Azure Data Factory to extract files or datasets from these sources. This facilitates integration with external systems or partners.--
+
+--Folder Structure:--
+ADF-FTP-SFTP-DataExtraction/
+├── README.md
+├── datafactory/
+│   ├── linkedservices/
+│   │   ├── SFTPLinkedService.json
+│   │   ├── AzureBlobStorage.json
+│   ├── datasets/
+│   │   ├── SourceSFTPFile.json
+│   │   ├── SinkBlobFile.json
+│   └── pipelines/
+│       └── SFTPtoBlobPipeline.json
+├── scripts/
+│   └── SampleCSVFile.csv
+└── docs/
+    └── SFTP_Config_Guide.md
+
+--Sample CSV File--
+ID,Name,Email
+1,John Doe,john@example.com
+2,Jane Smith,jane@example.com
+3,Alan Walker,alan@example.com
+
+--JSON Configurations--
+{
+  "name": "SFTPLinkedService",
+  "properties": {
+    "type": "Sftp",
+    "typeProperties": {
+      "host": "test.rebex.net",
+      "port": 22,
+      "authenticationType": "Basic",
+      "userName": "demo",
+      "password": {
+        "type": "SecureString",
+        "value": "password"
+      }
+    }
+  }
+}
+
+--linkedservices/AzureBlobStorage.json--
+{
+  "name": "AzureBlobStorage",
+  "properties": {
+    "type": "AzureBlobStorage",
+    "typeProperties": {
+      "connectionString": "DefaultEndpointsProtocol=https;AccountName=youraccount;AccountKey=yourkey;EndpointSuffix=core.windows.net"
+    }
+  }
+}
+
+--datasets/SourceSFTPFile.json--
+{
+  "name": "SourceSFTPFile",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "SFTPLinkedService",
+      "type": "LinkedServiceReference"
+    },
+    "type": "File",
+    "typeProperties": {
+      "location": {
+        "type": "SftpLocation",
+        "folderPath": "/pub/example",
+        "fileName": "readme.txt"
+      },
+      "format": {
+        "type": "TextFormat",
+        "columnDelimiter": ",",
+        "rowDelimiter": "\n"
+      }
+    }
+  }
+}
+
+--datasets/SinkBlobFile.json--
+{
+  "name": "SinkBlobFile",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "AzureBlobStorage",
+      "type": "LinkedServiceReference"
+    },
+    "type": "DelimitedText",
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobStorageLocation",
+        "folderPath": "sftp-output",
+        "fileName": "output.csv"
+      },
+      "format": {
+        "type": "TextFormat",
+        "columnDelimiter": ","
+      }
+    }
+  }
+}
+
+--pipelines/SFTPtoBlobPipeline.json--
+{
+  "name": "SFTPtoBlobPipeline",
+  "properties": {
+    "activities": [
+      {
+        "name": "CopyFromSFTPToBlob",
+        "type": "Copy",
+        "inputs": [
+          {
+            "referenceName": "SourceSFTPFile",
+            "type": "DatasetReference"
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "SinkBlobFile",
+            "type": "DatasetReference"
+          }
+        ],
+        "typeProperties": {
+          "source": {
+            "type": "DelimitedTextSource"
+          },
+          "sink": {
+            "type": "BlobSink"
+          }
+        }
+      }
+    ]
+  }
+}

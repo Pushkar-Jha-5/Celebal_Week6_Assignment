@@ -1,0 +1,209 @@
+--Design an ADF pipeline to perform incremental data loads using techniques like watermarking or change tracking. 
+Schedule this pipeline to run daily to ensure only new or modified records are processed, optimizing performance 
+and reducing load.--
+
+--Folder Structure:--
+ADF-Incremental-Load-Watermarking/
+├── README.md
+├── datafactory/
+│   ├── linkedservices/
+│   │   ├── SourceSQLServer.json
+│   │   ├── SinkAzureSQL.json
+│   ├── datasets/
+│   │   ├── SourceDataset.json
+│   │   ├── SinkDataset.json
+│   │   └── WatermarkDataset.json
+│   └── pipelines/
+│       └── IncrementalLoadPipeline.json
+├── trigger/
+│   └── DailyTrigger.json
+├── scripts/
+│   └── SetupTables.sql
+└── docs/
+    └── Incremental_Load_Guide.md
+
+--scripts/SetupTables.sql--
+-- Source Table
+CREATE TABLE SourceTable (
+    ID INT PRIMARY KEY,
+    Name NVARCHAR(100),
+    LastUpdated DATETIME
+);
+
+-- Sink Table
+CREATE TABLE SinkTable (
+    ID INT PRIMARY KEY,
+    Name NVARCHAR(100),
+    LastUpdated DATETIME
+);
+
+-- Watermark Table
+CREATE TABLE WatermarkTable (
+    TableName NVARCHAR(100) PRIMARY KEY,
+    LastWatermark DATETIME
+);
+
+-- Insert initial watermark
+INSERT INTO WatermarkTable (TableName, LastWatermark)
+VALUES ('SourceTable', '2020-01-01 00:00:00');
+
+--JSON Configs--
+{
+  "name": "SourceSQLServer",
+  "properties": {
+    "type": "SqlServer",
+    "typeProperties": {
+      "connectionString": "Server=localhost;Database=SourceDB;Integrated Security=True;"
+    },
+    "connectVia": {
+      "referenceName": "SelfHostedIR",
+      "type": "IntegrationRuntimeReference"
+    }
+  }
+}
+
+--linkedservices/SinkAzureSQL.json--
+{
+  "name": "SinkAzureSQL",
+  "properties": {
+    "type": "AzureSqlDatabase",
+    "typeProperties": {
+      "connectionString": "Server=tcp:<server>.database.windows.net;Database=SinkDB;User ID=user;Password=password;"
+    }
+  }
+}
+
+--datasets/SourceDataset.json--
+{
+  "name": "SourceDataset",
+  "properties": {
+    "linkedServiceName": { "referenceName": "SourceSQLServer", "type": "LinkedServiceReference" },
+    "type": "SqlServerTable",
+    "typeProperties": {
+      "tableName": "SourceTable",
+      "sqlQuery": "SELECT * FROM SourceTable WHERE LastUpdated > '@{variables('LastWatermark')}'"
+    }
+  }
+}
+
+--datasets/SinkDataset.json--
+{
+  "name": "SinkDataset",
+  "properties": {
+    "linkedServiceName": { "referenceName": "SinkAzureSQL", "type": "LinkedServiceReference" },
+    "type": "AzureSqlTable",
+    "typeProperties": { "tableName": "SinkTable" }
+  }
+}
+
+--datasets/WatermarkDataset.json--
+{
+  "name": "WatermarkDataset",
+  "properties": {
+    "linkedServiceName": { "referenceName": "SourceSQLServer", "type": "LinkedServiceReference" },
+    "type": "SqlServerTable",
+    "typeProperties": { "tableName": "WatermarkTable" }
+  }
+}
+
+--pipelines/IncrementalLoadPipeline.json--
+{
+  "name": "IncrementalLoadPipeline",
+  "properties": {
+    "variables": {
+      "LastWatermark": {
+        "type": "String"
+      }
+    },
+    "activities": [
+      {
+        "name": "GetWatermark",
+        "type": "Lookup",
+        "typeProperties": {
+          "source": {
+            "type": "SqlSource",
+            "sqlReaderQuery": "SELECT LastWatermark FROM WatermarkTable WHERE TableName = 'SourceTable'"
+          },
+          "dataset": {
+            "referenceName": "WatermarkDataset",
+            "type": "DatasetReference"
+          }
+        }
+      },
+      {
+        "name": "SetWatermarkVar",
+        "type": "SetVariable",
+        "dependsOn": [ { "activity": "GetWatermark", "dependencyConditions": [ "Succeeded" ] } ],
+        "typeProperties": {
+          "variableName": "LastWatermark",
+          "value": "@activity('GetWatermark').output.firstRow.LastWatermark"
+        }
+      },
+      {
+        "name": "CopyIncrementalData",
+        "type": "Copy",
+        "dependsOn": [ { "activity": "SetWatermarkVar", "dependencyConditions": [ "Succeeded" ] } ],
+        "inputs": [ { "referenceName": "SourceDataset", "type": "DatasetReference" } ],
+        "outputs": [ { "referenceName": "SinkDataset", "type": "DatasetReference" } ],
+        "typeProperties": {
+          "source": { "type": "SqlSource" },
+          "sink": { "type": "SqlSink" }
+        }
+      },
+      {
+        "name": "UpdateWatermark",
+        "type": "StoredProcedure",
+        "dependsOn": [ { "activity": "CopyIncrementalData", "dependencyConditions": [ "Succeeded" ] } ],
+        "typeProperties": {
+          "storedProcedureName": "sp_update_watermark",
+          "storedProcedureParameters": {
+            "TableName": { "value": "SourceTable", "type": "String" },
+            "NewWatermark": {
+              "value": "@utcNow()",
+              "type": "String"
+            }
+          }
+        },
+        "linkedServiceName": {
+          "referenceName": "SourceSQLServer",
+          "type": "LinkedServiceReference"
+        }
+      }
+    ]
+  }
+}
+
+--Stored Procedure in SourceDB--
+CREATE PROCEDURE sp_update_watermark
+    @TableName NVARCHAR(100),
+    @NewWatermark DATETIME
+AS
+BEGIN
+    UPDATE WatermarkTable
+    SET LastWatermark = @NewWatermark
+    WHERE TableName = @TableName
+END;
+
+--trigger/DailyTrigger.json--
+{
+  "name": "DailyTrigger",
+  "properties": {
+    "type": "ScheduleTrigger",
+    "typeProperties": {
+      "recurrence": {
+        "frequency": "Day",
+        "interval": 1,
+        "startTime": "2024-01-01T00:00:00Z",
+        "timeZone": "UTC"
+      }
+    },
+    "pipelines": [
+      {
+        "pipelineReference": {
+          "referenceName": "IncrementalLoadPipeline",
+          "type": "PipelineReference"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,154 @@
+-- Implement logic to handle data retrieval failures gracefully by waiting briefly (e.g., a few seconds) before 
+retrying cut, copy, or extraction operations, improving pipeline resilience and reducing transient error impacts.--
+
+--Folder Structure:--
+ADF-Retry-Transient-Failures/
+├── README.md
+├── datafactory/
+│   ├── pipelines/
+│   │   └── ResilientCopyPipeline.json
+│   ├── linkedservices/
+│   │   └── SampleSourceSink.json
+│   ├── datasets/
+│   │   ├── SourceDataset.json
+│   │   └── SinkDataset.json
+└── docs/
+    └── RetryLogic_Guide.md
+
+--datasets/SourceDataset.json--
+{
+  "name": "SourceDataset",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "SampleSource",
+      "type": "LinkedServiceReference"
+    },
+    "type": "RestResource",
+    "typeProperties": {
+      "relativeUrl": "/data",
+      "requestMethod": "GET"
+    }
+  }
+}
+
+--datasets/SinkDataset.json--
+{
+  "name": "SinkDataset",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "SampleSink",
+      "type": "LinkedServiceReference"
+    },
+    "type": "AzureBlob",
+    "typeProperties": {
+      "folderPath": "output",
+      "fileName": "output.json"
+    }
+  }
+}
+
+--pipelines/ResilientCopyPipeline.json--
+{
+  "name": "ResilientCopyPipeline",
+  "properties": {
+    "activities": [
+      {
+        "name": "CopyWithRetries",
+        "type": "Copy",
+        "policy": {
+          "retry": 3,
+          "retryIntervalInSeconds": 10
+        },
+        "inputs": [
+          {
+            "referenceName": "SourceDataset",
+            "type": "DatasetReference"
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "SinkDataset",
+            "type": "DatasetReference"
+          }
+        ],
+        "typeProperties": {
+          "source": { "type": "RestSource" },
+          "sink": { "type": "BlobSink" }
+        }
+      }
+    ]
+  }
+}
+
+--Use Until loop + Web Activity + Wait if you need advanced handling.--
+{
+  "name": "ResilientPipelineWithUntil",
+  "properties": {
+    "variables": {
+      "RetryCount": { "type": "Int", "defaultValue": 0 },
+      "MaxRetries": { "type": "Int", "defaultValue": 3 },
+      "Success": { "type": "Bool", "defaultValue": false }
+    },
+    "activities": [
+      {
+        "name": "RetryUntilSuccess",
+        "type": "Until",
+        "typeProperties": {
+          "expression": {
+            "value": "@variables('Success')",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "TryWebCall",
+              "type": "WebActivity",
+              "typeProperties": {
+                "url": "https://unstable-api.example.com/data",
+                "method": "GET"
+              },
+              "policy": {
+                "retry": 0
+              }
+            },
+            {
+              "name": "CheckResponse",
+              "type": "IfCondition",
+              "typeProperties": {
+                "expression": {
+                  "value": "@equals(activity('TryWebCall').statusCode, 200)",
+                  "type": "Expression"
+                },
+                "ifTrueActivities": [
+                  {
+                    "name": "SetSuccessTrue",
+                    "type": "SetVariable",
+                    "typeProperties": {
+                      "variableName": "Success",
+                      "value": true
+                    }
+                  }
+                ],
+                "ifFalseActivities": [
+                  {
+                    "name": "IncrementRetry",
+                    "type": "SetVariable",
+                    "typeProperties": {
+                      "variableName": "RetryCount",
+                      "value": "@add(variables('RetryCount'), 1)"
+                    }
+                  },
+                  {
+                    "name": "WaitBeforeRetry",
+                    "type": "Wait",
+                    "typeProperties": { "waitTimeInSeconds": 10 }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+
